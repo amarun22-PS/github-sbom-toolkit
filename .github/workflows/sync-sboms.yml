@@ -1,0 +1,109 @@
+name: Sync Organization SBOMs
+
+on:
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: 'GitHub organization to collect SBOMs from'
+        required: true
+        type: string
+      concurrency:
+        description: 'Number of parallel SBOM fetches (default: 5)'
+        required: false
+        type: number
+        default: 5
+      sbom_delay:
+        description: 'Delay in ms between SBOM fetch requests (default: 3000)'
+        required: false
+        type: number
+        default: 3000
+  schedule:
+    # Run on the 1st of every month at 01:00 UTC
+    - cron: '0 1 1 * *'
+  workflow_call:
+    inputs:
+      organization:
+        description: 'GitHub organization to collect SBOMs from'
+        required: true
+        type: string
+      concurrency:
+        description: 'Number of parallel SBOM fetches (default: 5)'
+        required: false
+        type: number
+        default: 5
+      sbom_delay:
+        description: 'Delay in ms between SBOM fetch requests (default: 3000)'
+        required: false
+        type: number
+        default: 3000
+    secrets:
+      token:
+        description: 'GitHub token with repo scope for SBOM access'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  sync-sboms:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Create SBOM cache directory
+        run: mkdir -p sbom-cache
+
+      - name: Download existing SBOM cache artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom-cache-${{ inputs.organization || github.event.inputs.organization }}
+          path: sbom-cache
+        continue-on-error: true
+
+      - name: Sync SBOMs for organization
+        env:
+          GITHUB_TOKEN: ${{ secrets.token || secrets.GITHUB_TOKEN }}
+          ORG: ${{ inputs.organization || github.event.inputs.organization }}
+          CONCURRENCY: ${{ inputs.concurrency || github.event.inputs.concurrency || 5 }}
+          SBOM_DELAY: ${{ inputs.sbom_delay || github.event.inputs.sbom_delay || 3000 }}
+        run: |
+          npm run start -- \
+            --sync-sboms \
+            --org "$ORG" \
+            --sbom-cache sbom-cache \
+            --concurrency "$CONCURRENCY" \
+            --sbom-delay "$SBOM_DELAY" \
+            --progress \
+            --quiet
+
+      - name: Generate timestamp
+        id: timestamp
+        run: echo "timestamp=$(date -u +%Y%m%d_%H%M%S)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SBOM artifact with timestamp
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ inputs.organization || github.event.inputs.organization }}-${{ steps.timestamp.outputs.timestamp }}
+          path: sbom-cache/
+          retention-days: 90
+
+      - name: Upload SBOM cache (latest)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cache-${{ inputs.organization || github.event.inputs.organization }}
+          path: sbom-cache/
+          overwrite: true
+          retention-days: 90

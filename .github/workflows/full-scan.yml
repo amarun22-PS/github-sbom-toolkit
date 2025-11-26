@@ -1,0 +1,125 @@
+name: Full SBOM Security Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: 'GitHub organization to scan'
+        required: true
+        type: string
+      malware_since:
+        description: 'ISO date to fetch advisories from (e.g., 2025-01-01). Leave empty for incremental sync.'
+        required: false
+        type: string
+      malware_cutoff:
+        description: 'Ignore advisories published before this ISO date'
+        required: false
+        type: string
+      ignore_unbounded:
+        description: 'Ignore unbounded version range advisories'
+        required: false
+        type: boolean
+        default: false
+      generate_sarif:
+        description: 'Generate SARIF output files'
+        required: false
+        type: boolean
+        default: true
+      upload_sarif:
+        description: 'Upload SARIF to GitHub Code Scanning'
+        required: false
+        type: boolean
+        default: false
+      concurrency:
+        description: 'Number of parallel SBOM fetches (default: 5)'
+        required: false
+        type: number
+        default: 5
+      sbom_delay:
+        description: 'Delay in ms between SBOM fetch requests (default: 3000)'
+        required: false
+        type: number
+        default: 3000
+  schedule:
+    # Run on the 1st of every month at 03:00 UTC (after individual workflows complete)
+    - cron: '0 3 1 * *'
+  workflow_call:
+    inputs:
+      organization:
+        description: 'GitHub organization to scan'
+        required: true
+        type: string
+      malware_since:
+        description: 'ISO date to fetch advisories from (e.g., 2025-01-01). Leave empty for incremental sync.'
+        required: false
+        type: string
+      malware_cutoff:
+        description: 'Ignore advisories published before this ISO date'
+        required: false
+        type: string
+      ignore_unbounded:
+        description: 'Ignore unbounded version range advisories'
+        required: false
+        type: boolean
+        default: false
+      generate_sarif:
+        description: 'Generate SARIF output files'
+        required: false
+        type: boolean
+        default: true
+      upload_sarif:
+        description: 'Upload SARIF to GitHub Code Scanning'
+        required: false
+        type: boolean
+        default: false
+      concurrency:
+        description: 'Number of parallel SBOM fetches (default: 5)'
+        required: false
+        type: number
+        default: 5
+      sbom_delay:
+        description: 'Delay in ms between SBOM fetch requests (default: 3000)'
+        required: false
+        type: number
+        default: 3000
+    secrets:
+      token:
+        description: 'GitHub token with repo and security_events scopes'
+        required: true
+
+permissions:
+  contents: write
+  security-events: write
+
+jobs:
+  sync-advisories:
+    name: Step 1 - Sync Malware Advisories
+    uses: ./.github/workflows/sync-malware-advisories.yml
+    with:
+      malware_since: ${{ inputs.malware_since }}
+    secrets:
+      token: ${{ secrets.token || secrets.GITHUB_TOKEN }}
+
+  sync-sboms:
+    name: Step 2 - Sync Organization SBOMs
+    needs: sync-advisories
+    uses: ./.github/workflows/sync-sboms.yml
+    with:
+      organization: ${{ inputs.organization }}
+      concurrency: ${{ inputs.concurrency || 5 }}
+      sbom_delay: ${{ inputs.sbom_delay || 3000 }}
+    secrets:
+      token: ${{ secrets.token || secrets.GITHUB_TOKEN }}
+
+  match-malware:
+    name: Step 3 - Match Malware
+    needs: [sync-advisories, sync-sboms]
+    uses: ./.github/workflows/match-malware.yml
+    with:
+      organization: ${{ inputs.organization }}
+      malware_cutoff: ${{ inputs.malware_cutoff }}
+      ignore_unbounded: ${{ inputs.ignore_unbounded || false }}
+      generate_sarif: ${{ inputs.generate_sarif || true }}
+      upload_sarif: ${{ inputs.upload_sarif || false }}
+    secrets:
+      token: ${{ secrets.token || secrets.GITHUB_TOKEN }}
