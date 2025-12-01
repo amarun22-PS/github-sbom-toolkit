@@ -7,7 +7,6 @@ on:
         description: 'GitHub organization to scan'
         required: true
         type: string
-        default: ${{ github.repository_owner }}
       malware_since:
         description: 'ISO date to fetch advisories from (e.g., 2025-01-01). Leave empty for incremental sync.'
         required: false
